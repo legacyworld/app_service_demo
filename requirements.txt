@@ -1,0 +1,8 @@
+Flask
+redis
+gunicorn
+opentelemetry-distro
+opentelemetry-exporter-otlp
+opentelemetry-instrumentation-redis
+opentelemetry-instrumentation-logging
+elastic-opentelemetry

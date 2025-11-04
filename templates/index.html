@@ -1,0 +1,214 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Service 障害シミュレーション デモ (V1/V2)</title>
+    <!-- Bootstrap 5 CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; }
+        .result-container { max-height: 80vh; overflow-y: auto; }
+        .row-item { margin-bottom: 5px; padding: 10px; border-radius: 5px; }
+        /* カスタムカラークラス */
+        .bg-success-subtle { background-color: #d1e7dd; }
+        .bg-warning-subtle { background-color: #fff3cd; }
+        .bg-danger-subtle { background-color: #f8d7da; }
+        .bg-info-subtle { background-color: #cff4fc; }
+    </style>
+</head>
+<body>
+
+<div class="container mt-4">
+    <h1 class="text-center mb-4">
+        App Service API 応答デモ
+        <span class="badge bg-primary fs-6" id="call-count">0</span>
+    </h1>
+    
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <h5 class="card-title">デモ概要</h5>
+            
+            <div class="mb-3">
+                <label class="form-label fw-bold">APIバージョン選択:</label>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="apiVersion" id="versionV1" value="v1" checked>
+                    <label class="form-check-label" for="versionV1">V1 (安定: 常に成功)</label>
+                </div>
+                <div class="form-check form-check-inline">
+                    <input class="form-check-input" type="radio" name="apiVersion" id="versionV2" value="v2">
+                    <label class="form-check-label" for="versionV2">V2 (不安定: 確率的な遅延/エラー)</label>
+                </div>
+                <p class="text-muted small mt-2">現在選択されているバージョン: <span id="current-version">V2</span></p>
+            </div>
+
+            <p class="mb-0">APIエンドポイント <code>/api/status</code> を2秒ごとに呼び出しています。</p>
+            <p class="mb-0">V2 のシミュレーション確率: 成功 (60%), 遅延 (30%), エラー (10%)</p>
+        </div>
+        <div class="card-footer text-muted small">
+            Commit: {{ GIT_COMMIT }} / Deploy ID: {{ DEPLOY_ID }}
+        </div>
+    </div>
+
+
+    <div class="result-container border p-3 bg-white shadow-sm">
+        <h5 class="mb-3">呼び出し履歴</h5>
+        <div id="results-list">
+            <!-- 結果がここに追加されます -->
+        </div>
+    </div>
+</div>
+
+<script>
+const resultsList = document.getElementById('results-list');
+const callCountElement = document.getElementById('call-count');
+const currentVersionElement = document.getElementById('current-version');
+let callCount = 0;
+
+// バージョン変更リスナーを設定
+document.querySelectorAll('input[name="apiVersion"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+        currentVersionElement.textContent = e.target.value.toUpperCase();
+    });
+});
+
+// 現在選択されているバージョンを取得するヘルパー
+function getSelectedVersion() {
+    return document.querySelector('input[name="apiVersion"]:checked').value;
+}
+
+function formatTimestamp(tsMillis) {
+    const date = new Date(tsMillis);
+    return date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+}
+
+async function callApi() {
+    callCount++;
+    callCountElement.textContent = callCount;
+    
+    const version = getSelectedVersion();
+    // 選択されたバージョンをクエリパラメータとして付与
+    const apiEndpoint = `/api/status?version=${version}`;
+
+    const startFetchTime = performance.now();
+    let response;
+
+    try {
+        response = await fetch(apiEndpoint);
+        const endFetchTime = performance.now();
+        
+        let data;
+        try {
+            // ステータスコードが204 (No Content) などの場合はJSONパースをスキップ
+            if (response.status !== 204) {
+                data = await response.json();
+            } else {
+                data = {};
+            }
+        } catch (e) {
+            // JSONパース失敗の場合もエラーとして扱う
+            data = {
+                outcome: "PARSE_ERROR",
+                error: `Failed to parse response (Status: ${response.status})`,
+                timestamp: Date.now(),
+                latency_ms: (endFetchTime - startFetchTime).toFixed(2),
+                version: version
+            };
+        }
+
+        const statusCode = response.status;
+        const outcome = data.outcome || (statusCode === 200 ? "OK" : "HTTP_ERROR");
+        const serverLatencyMs = parseFloat(data.latency_ms || 0); 
+        const totalLatencyMs = (endFetchTime - startFetchTime); 
+
+        let bgColorClass;
+        let icon;
+        let outcomeBadgeClass;
+
+        if (statusCode === 200) {
+            if (outcome === 'SUCCESS') {
+                bgColorClass = 'bg-success-subtle';
+                icon = '✅';
+                outcomeBadgeClass = 'text-bg-success';
+            } else if (outcome === 'LATENCY') {
+                bgColorClass = 'bg-warning-subtle';
+                icon = '⚠️';
+                outcomeBadgeClass = 'text-bg-warning';
+            } else {
+                bgColorClass = 'bg-info-subtle';
+                icon = '❓';
+                outcomeBadgeClass = 'text-bg-info';
+            }
+        } else if (statusCode >= 500) {
+            bgColorClass = 'bg-danger-subtle';
+            icon = '❌';
+            outcomeBadgeClass = 'text-bg-danger';
+        } else {
+            // 4xx系
+            bgColorClass = 'bg-warning-subtle';
+            icon = '🛑';
+            outcomeBadgeClass = 'text-bg-secondary';
+        }
+
+        // V2で発生するエラーメッセージを詳細に表示
+        const detailMessage = data.message || data.error || `HTTP Status ${statusCode} (${outcome})`;
+        const responseVersion = data.version ? `V${data.version.toUpperCase()}` : 'V?';
+
+        // ★★★ 修正・完成部分 ★★★
+        const newItem = `
+            <div class="row-item ${bgColorClass} d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="fw-bold me-2">${icon} #${callCount}</span>
+                    <span class="badge bg-dark me-2">HTTP ${statusCode}</span>
+                    <span class="badge ${outcomeBadgeClass} me-2">${outcome}</span>
+                    <span class="badge text-bg-primary me-2">${responseVersion}</span>
+                    <span class="text-muted">${formatTimestamp(data.timestamp || Date.now())}</span>
+                    <br>
+                    <small class="text-break">${detailMessage}</small>
+                </div>
+                <div class="text-end">
+                    <span class="fw-bold">${totalLatencyMs.toFixed(0)} ms</span>
+                    <br>
+                    <small>(Server: ${serverLatencyMs.toFixed(0)} ms)</small>
+                </div>
+            </div>
+        `;
+        // ★★★ 修正・完成部分 ここまで ★★★
+        
+        resultsList.insertAdjacentHTML('afterbegin', newItem);
+        
+        // 履歴が多くなったら古いものを削除 (パフォーマンス維持のため)
+        while (resultsList.children.length > 50) {
+            resultsList.removeChild(resultsList.lastChild);
+        }
+
+    } catch (error) {
+        console.error('Fetch error:', error);
+        
+        // ネットワークレベルの失敗
+        const newItem = `
+            <div class="row-item bg-dark text-white d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="fw-bold me-2">🚨 #${callCount}</span>
+                    <span class="badge bg-danger me-2">NETWORK FAILED</span>
+                    <span class="badge text-bg-primary me-2">V${version.toUpperCase()}</span>
+                    <br>
+                    <small>クライアント側でAPI呼び出しに失敗しました。 (${error.message})</small>
+                </div>
+                <div>
+                    ${formatTimestamp(Date.now())}
+                </div>
+            </div>
+        `;
+        resultsList.insertAdjacentHTML('afterbegin', newItem);
+    }
+}
+
+// 2000ms (2秒)ごとにAPIを呼び出す
+setInterval(callApi, 2000);
+callApi(); // 最初に一度すぐに実行
+</script>
+
+</body>
+</html>
