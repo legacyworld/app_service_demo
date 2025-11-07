@@ -6,9 +6,8 @@ from flask import Flask, jsonify, request, render_template, abort
 import redis
 from redis.exceptions import ConnectionError, TimeoutError
 
-
 # 環境変数設定 (変更なし)
-REDIS_HOST = os.environ.get("REDIS_HOST")
+REDIS_HOST = os.environ.get("REDIS_NAME") + ".redis.cache.windows.net"
 REDIS_PORT = int(os.environ.get("REDIS_PORT", "6380"))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
 
@@ -34,6 +33,7 @@ if REDIS_HOST:
     try:
         logger.info("Connecting to Redis at %s:%d", REDIS_HOST, REDIS_PORT)
         # Note: socket_connect_timeout=2 added for robustness
+        print("REDIS_HOST: ", REDIS_HOST)
         redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, socket_connect_timeout=2, password=REDIS_PASSWORD, ssl=True)
         redis_client.ping()
         logger.info("Redis connection successful!")
